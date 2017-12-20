@@ -1,0 +1,306 @@
+---
+title: "Calculos OP-Esteve"
+output:
+  html_notebook: default
+  html_document: default
+---
+
+Filtros y un par de modelos para el estudio sobre oferta preferente.
+
+# Preparacion
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(echo = FALSE, include = FALSE)
+```
+
+```{r directorio_paquetes}
+# Lectura de datos ------
+setwd("D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711")
+
+# Paquetes
+require(Hmisc)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(knitr)
+library(gtools)
+```
+
+## Leer datos
+```{r lectura_ficheros}
+# Ficheros individual y agregado
+individual <- read.table(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/poblacion_individual_junta.txt", header = TRUE, sep = "")
+oferta <- read.table(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/oferta_preferente.txt", header = TRUE, sep = "")
+```
+
+```{r lectura_dgs_AP}
+# Lectura de listados de pacientes diagnosticados en AP 
+# HTA
+# Pacientes con Diagnostico en AP
+hta_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/hta_ap.csv", header = T)
+names(hta_ap) <- "id_paciente"
+#hay ceros
+hta_ap %>% filter(id_paciente != 0) -> hta_ap
+
+# EPOC
+# Pacientes con Diagnostico en AP
+epoc_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/epoc_ap.csv", header = T)
+names(epoc_ap) <- "id_paciente"
+#hay ceros
+epoc_ap %>% filter(id_paciente != 0) -> epoc_ap
+
+# DIABETES
+# Pacientes con Diagnostico en AP
+dm_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/diabetes_ap.csv", header = T)
+names(dm_ap) <- "id_paciente"
+#hay ceros
+dm_ap %>% filter(id_paciente != 0) -> dm_ap
+```
+
+
+# Filtros basicos
+
+```{r identificar_osis_cupos}
+# Identificar osis y cupos
+filtrarosis <- c("DIRECCION DE ASISTENCIA SANITARIA", "SIN DETERMINAR", "OSI TOLOSALDEA")
+cupos_rioja <- individual %>% filter( uap == 5013) %>% dplyr::select(cupo) %>% unique()
+cupos_rioja <- cupos_rioja$cupo
+
+#identificar cupos con oferta incompleta
+oferta %>% filter(is.na(porc_epoc2)) %>% select(cupo) -> cupos_ofertaincompleta
+```
+
+## Filtros basicos en fichero nivel individual
+```{r filtros_individual}
+individual %>% filter( com != "OS22") -> individual #OSI Tolosaldea
+individual %>% filter( uap != 5013 ) -> individual #UAP Rioja Alavesa
+```
+
+## Filtros basicos en fichero agregado
+```{r filtros_agregado}
+# Filtrar OSis y cupos
+oferta %>% filter(!(osi %in% filtrarosis)) -> oferta
+oferta %>% filter(!(cupo %in% cupos_rioja)) -> oferta
+
+# Filtrar cupos con datos completos cumplimiento
+#aplicar
+oferta %>% filter(!is.na(porc_epoc2)) -> oferta
+```
+
+## Coherencia entre ficheros
+* En el fichero individual quitamos los pacientes pertenecientes a cupos eliminados.
+
+```{r filtros_coherencia, include=TRUE}
+individual %>% filter(cupo %in% oferta$cupo) -> individual
+cat("Filas fichero individual:\n")
+nrow(individual)
+cat("Filas fichero agregado:\n")
+nrow(oferta)
+```
+
+# Transformaciones previas
+```{r transformaciones_previas}
+# Recuperar nombre de osi en fichero individual 
+oferta %>% select(osi, cupo) %>% right_join(individual) -> individual
+# Recuperar la UAP en oferta
+individual %>% select(uap, cupo) %>% unique() %>% right_join(oferta) -> oferta
+
+#eliminar variables superficiales
+oferta$op <- NULL #constante, 1
+```
+
+## Adjuntar datos de diagnosticos de AP 
+```{r datos_diagnosticosAP, include=TRUE}
+# Recuperar datos de Diagnosticos de AP, en fichero individual 
+individual %>% mutate(dm_ap =  ( id_paciente %in% dm_ap$id_paciente ) * 1,
+                      hta_ap =  ( id_paciente %in% hta_ap$id_paciente ) * 1,
+                      epoc_ap =  ( id_paciente %in% epoc_ap$id_paciente ) * 1) -> individual
+
+table(individual$dm_ap) # 133070 tendrian DM segun Osabide AP
+table(individual$dm) # 137923 tendrian DM segun todas las fuentes
+cat("DM codificados en AP:\n")
+133070 / 137923 #un 96%
+
+table(individual$hta_ap) # 358,836 tendrian HTA segun Osabide AP
+table(individual$hta) # 424,227 tendrian HTA   segun todas las fuentes
+cat("HTA codificados en AP:\n")
+358836 / 424227 #un 84%
+
+table(individual$epoc_ap) # 39,554 tendrian epoc segun Osabide AP
+table(individual$epoc) # 50,507 tendrian epoc segun todas las fuentes
+cat("EPOC codificados en AP:\n")
+39554 / 50507 #un 78%
+```
+
+# Seleccion de poblacion
+
+### Tamanyo de cupos
+```{r explorar_tamanyo_cupos, include=TRUE}
+# Tamanyo cupos
+individual %>% group_by(cupo) %>% summarise(n=n()) %>% summary
+#Cupos con un solo paciente!, mirar
+individual %>% group_by(cupo) %>% summarise(n=n()) %>% filter(n == 1) %>% head()
+individual %>% filter(cupo == 22997) 
+#Pintar distribucion por OSIs
+individual %>% 
+  group_by(cupo, osi) %>% 
+  summarise(n=n()) %>% 
+  # filter(n > 1) %>%
+  ungroup() %>% 
+  ggplot2::ggplot(aes(x = n)) + geom_histogram() + facet_grid(osi~.) 
+```
+
+```{r seleccion_cupos}
+
+individual %>% 
+  group_by(cupo) %>% 
+  summarise(n=n()) %>% 
+  filter(n >= 1000) %>% ungroup() %>% select(cupo) -> cupos_m_N
+
+#estimar numero de cupos
+oferta %>% filter(cupo %in% cupos_m_N$cupo) %>% nrow() #1263
+
+```
+
+
+### Edad de los individuos (prevalencias minimas)
+
+```{r filtro_edad, include=TRUE}
+# Filtro basico; mayores de 14 
+individual %>% filter(edad >= 14) -> individual
+cat("Filas fichero individual con mayores 14:\n")
+nrow(individual)
+# Crear edad quinquenal, histograma
+agebreaks <- seq(from=min(individual$edad), to=max(individual$edad), by=5)
+individual$edad_5 <- cut2(individual$edad, cuts=agebreaks)
+table(individual$edad_5)
+# histogram(individual$edad)
+```
+
+* Prevalencia por edades
+```{r prevalencia_edad}
+individual %>% group_by(edad_5) %>% summarise(hta_n = sum(hta),
+                                              hta_prop = round(sum(hta) / n() * 100,1),
+                                              dm_n = sum(dm),
+                                              dm_prop = round(sum(dm) / n() * 100,1),
+                                              epoc_n = sum(epoc),
+                                              epoc_prop = round(sum(epoc) / n() * 100,1)) %>%
+  knitr::kable("markdown", align = 'c', padding = 2)
+ 
+```
+
+
+
+# Modelos Poisson a nivel agregado (tentativa)
+## Preparar variables
+```{r preparar_variables}
+
+# Categorizar porcentajes de cumplimiento
+oferta$porc_hta1_cat<-quantcut(oferta$porc_hta1, q=5, na.rm=TRUE)
+oferta$porc_hta2_cat<-quantcut(oferta$porc_hta2, q=5, na.rm=TRUE)
+oferta$porc_hta3_cat<-quantcut(oferta$porc_hta3, q=5, na.rm=TRUE)
+oferta$porc_hta4_cat<-quantcut(oferta$porc_hta4, q=5, na.rm=TRUE)
+oferta$porc_hta5_cat<-quantcut(oferta$porc_hta5, q=5, na.rm=TRUE)
+oferta$porc_hta6_cat<-quantcut(oferta$porc_hta6, q=5, na.rm=TRUE)
+
+# adjuntar tamayo cupo
+individual %>% 
+  group_by(cupo) %>% 
+  summarise(n_cupo=n()) %>% right_join(oferta) -> oferta
+
+# adjuntar porcentaje mayores 64
+individual %>% 
+  group_by(cupo) %>% 
+  summarise(pmayor64=sum(mayor64)/n()) %>% right_join(oferta) -> oferta
+
+# adjuntar porcentaje Mujeres
+individual %>% 
+  group_by(cupo) %>% 
+  summarise(pmujer=sum(mujer)/n()) %>% right_join(oferta) -> oferta
+
+# adjuntar el outcome
+individual %>% 
+  group_by(cupo) %>% 
+  summarise(n_cupo=n(), 
+            hpe_dm = sum(hpe_dm),
+            hpe_icc = sum(hpe_icc),
+            hpe_epoc = sum(hpe_epoc),
+            hpe_tot = sum(hpe_tot)) %>% 
+  right_join(oferta) -> oferta
+
+```
+
+* Fichero filtrado (tamanyo cupos) - para estimar modelos
+```{r filtrar_cupos}
+oferta %>% filter(cupo %in% cupos_m_N$cupo) -> oferta_dat
+```
+
+* Modelo Poisson sencillo
+```{r modelos_pruebas}
+str(oferta)
+mod0 <- MASS::glm.nb(hpe_epoc ~ offset(log(n_cupo)), data = oferta_dat)
+mod1 <- MASS::glm.nb(hpe_epoc ~ pmayor64 + offset(log(n_cupo)), data = oferta_dat)
+mod2 <- MASS::glm.nb(hpe_epoc ~ pmayor64 + pmujer + offset(log(n_cupo)), data = oferta_dat)
+summary(mod2)
+```
+
+# Construir escala - grado de codificacion de los cupos
+```{r construir_df}
+unique(individual$cupo) %>% length()
+muestracupos <- sample(x = unique(oferta$cupo), size = 20)
+
+df <- individual %>% 
+  # filter(cupo %in% muestracupos) %>% 
+  # sample_n( size =  1000 ) %>% 
+  dplyr::select(id_paciente, dm, hta, epoc, dm_ap, hta_ap, epoc_ap)
+nrow(df) #alrededor de 27365
+
+df %>% gather(dg, var, -id_paciente,-dm, -hta, -epoc) %>%
+  arrange(id_paciente) -> df2
+
+#ahora Calcular la variable var; poner NA a los que no han sido diagnosticados
+df2 %>% filter(dg == "dm_ap") %>% mutate(var = ifelse(dm == 0, NA, var)) -> df2.dm
+df2 %>% filter(dg == "hta_ap") %>% mutate(var = ifelse(hta == 0, NA, var)) -> df2.hta
+df2 %>% filter(dg == "epoc_ap") %>% mutate(var = ifelse(epoc == 0, NA, var)) -> df2.epoc
+
+#juntamos las 3
+df2.dm %>% rbind(df2.epoc) %>% rbind(df2.hta) %>% arrange(id_paciente) -> df2
+
+# recuperamos datos; osi, uap, cupo...
+df2 %>% left_join(individual %>% 
+                    select(id_paciente, osi, uap, cupo, edad, sexo, edad_5), by = "id_paciente") %>% 
+  select(-dm, -hta, -epoc) -> df2
+
+head(df2, n = 100) %>% View()
+summary(df2$edad)
+table(df2$edad_5)
+#agrupar a partir de 84
+agebreaks <- c(14, 39, 59, 79)
+df2$edad_cat <- cut2(df2$edad, cuts=agebreaks)
+table(df2$edad_cat)
+```
+
+
+```{r escala_codificacion_cupos}
+# Modelo multinivel; propension a codificar -------
+df2$dg <- factor(df2$dg)
+df2$sexo <- factor(df2$sexo)
+df2$cupo <- factor(df2$cupo)
+df2$id_paciente <- factor(df2$id_paciente)
+
+head(df2)
+mod3 <- glmer(var ~ sexo + edad_cat + cupo + (1|dg), family = binomial, data = df2)
+mod4 <- glmer(var ~ sexo + edad_cat + cupo + dg + (1|id_paciente), family = binomial, data = df2)
+summary(mod3)
+summary(mod4)
+
+
+# CI para los cupos (modelo 3)
+se <- sqrt(diag(vcov(mod3)))
+(tab <- cbind(Est = fixef(mod3), LL = fixef(mod3) - 1.96 * se, UL = fixef(mod3) + 1.96 *
+                se))
+exp(tab)
+```
+
