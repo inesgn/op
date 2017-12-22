@@ -57,6 +57,10 @@ dm_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve
 names(dm_ap) <- "id_paciente"
 #hay ceros
 dm_ap %>% filter(id_paciente != 0) -> dm_ap
+
+# ICC# Pacientes con Diagnostico en AP
+icc_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/icc_ap.csv", header = T)
+names(icc_ap) <- "id_paciente"#hay cerosicc_ap %>% filter(id_paciente != 0) -> icc_ap
 ```
 
 
