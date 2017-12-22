@@ -60,7 +60,9 @@ dm_ap %>% filter(id_paciente != 0) -> dm_ap
 
 # ICC# Pacientes con Diagnostico en AP
 icc_ap <- read.csv2(file = "D:/perfiles/72480965F/Mis Documentos/Proyectos/Esteve/201711/datos/icc_ap.csv", header = T)
-names(icc_ap) <- "id_paciente"#hay cerosicc_ap %>% filter(id_paciente != 0) -> icc_ap
+names(icc_ap) <- "id_paciente"
+#hay ceros
+icc_ap %>% filter(id_paciente != 0) -> icc_ap
 ```
 
 
@@ -118,9 +120,11 @@ oferta$op <- NULL #constante, 1
 ## Adjuntar datos de diagnosticos de AP 
 ```{r datos_diagnosticosAP, include=TRUE}
 # Recuperar datos de Diagnosticos de AP, en fichero individual 
-individual %>% mutate(dm_ap =  ( id_paciente %in% dm_ap$id_paciente ) * 1,
-                      hta_ap =  ( id_paciente %in% hta_ap$id_paciente ) * 1,
-                      epoc_ap =  ( id_paciente %in% epoc_ap$id_paciente ) * 1) -> individual
+individual %>% 
+mutate(dm_ap =  ( id_paciente %in% dm_ap$id_paciente ) * 1,                      
+hta_ap =  ( id_paciente %in% hta_ap$id_paciente ) * 1,                      
+icc_ap =  ( id_paciente %in% icc_ap$id_paciente ) * 1,                      
+epoc_ap =  ( id_paciente %in% epoc_ap$id_paciente ) * 1 ) -> individual
 
 table(individual$dm_ap) # 133070 tendrian DM segun Osabide AP
 table(individual$dm) # 137923 tendrian DM segun todas las fuentes
@@ -131,6 +135,11 @@ table(individual$hta_ap) # 358,836 tendrian HTA segun Osabide AP
 table(individual$hta) # 424,227 tendrian HTA   segun todas las fuentes
 cat("HTA codificados en AP:\n")
 358836 / 424227 #un 84%
+
+table(individual$icc_ap) # 16,170 tendrian ICC segun Osabide AP
+table(individual$icc) # 21,671 tendrian ICC segun todas las fuentes
+cat("ICC codificados en AP:\n")
+16170 / 21671 #un 75%
 
 table(individual$epoc_ap) # 39,554 tendrian epoc segun Osabide AP
 table(individual$epoc) # 50,507 tendrian epoc segun todas las fuentes
@@ -252,15 +261,24 @@ summary(mod2)
 
 # Construir escala - grado de codificacion de los cupos
 ```{r construir_df}
+#La idea es repetir lo que se hizo para semfyc. El objetivo es clasificar a los cupos segun su grado de codificacion.
+# Inicialmente se prueba con una muestra de cupos para ver lo que sale.
+# se trata de repetir lo que se hizo para semfyc: se construye un data frame con un bloque de filas por individuo (tantas filas como
+# patologias; en este caso 3 - epoc, dm, hta). Se crea una variable var que vale NA si no hay diagnostico en el sistema; vale 0 si hay diagnostico segun ACG, pero este no se recoge en AP; y 1 si se recoge en AP.
+# El data-frame final es df2, que contiene esta variable var.
+
+#muestreamos cupos
 unique(individual$cupo) %>% length()
 muestracupos <- sample(x = unique(oferta$cupo), size = 20)
 
+#aplicamos la muestra
 df <- individual %>% 
-  # filter(cupo %in% muestracupos) %>% 
+  filter(cupo %in% muestracupos) %>% 
   # sample_n( size =  1000 ) %>% 
   dplyr::select(id_paciente, dm, hta, epoc, dm_ap, hta_ap, epoc_ap)
 nrow(df) #alrededor de 27365
 
+# generamos la estructura (3 filas por paciente) usando la funcion gather
 df %>% gather(dg, var, -id_paciente,-dm, -hta, -epoc) %>%
   arrange(id_paciente) -> df2
 
